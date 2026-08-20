@@ -141,7 +141,6 @@ jobs:
             dsh: "0.1.0-rc.8"
             profile: headless
     env:
-      DSH_HOME: ${{ runner.temp }}/dsh-home-${{ matrix.dsh }}-${{ matrix.profile }}
       DSH_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -173,8 +172,10 @@ jobs:
           diepi-mcp init-config --target $adapterHome
           $config = Join-Path $adapterHome "diepi-mcp.json"
           $mcp = (Get-Command diepi-mcp).Source
+          $dshHome = Join-Path $env:RUNNER_TEMP "dsh-home-${{ matrix.dsh }}-${{ matrix.profile }}"
           "DIEPI_MCP_COMMAND=$mcp" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "DIEPI_MCP_CONFIG=$config" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "DSH_HOME=$dshHome" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install wheel and initialize host-owned synthetic home (Ubuntu)
         if: runner.os == 'Linux'
@@ -186,6 +187,7 @@ jobs:
           diepi-mcp init-config --target "$RUNNER_TEMP/adapter-home"
           echo "DIEPI_MCP_COMMAND=$(command -v diepi-mcp)" >> "$GITHUB_ENV"
           echo "DIEPI_MCP_CONFIG=$RUNNER_TEMP/adapter-home/diepi-mcp.json" >> "$GITHUB_ENV"
+          echo "DSH_HOME=$RUNNER_TEMP/dsh-home-${{ matrix.dsh }}-${{ matrix.profile }}" >> "$GITHUB_ENV"
 
       - name: Check installed wheel config and direct MCP surface
         run: |
