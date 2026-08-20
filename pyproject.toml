@@ -24,7 +24,7 @@ dependencies = [
   "diepi==0.1.1",
   "mcp==1.29.0",
   "pydantic>=2.12,<3",
-  "pydantic-settings>=2.12,<2.15",
+  "pydantic-settings>=2.12,<2.16",
 ]
 
 [project.urls]
