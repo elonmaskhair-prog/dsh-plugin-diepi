@@ -241,7 +241,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=$(find candidate/packed -maxdepth 1 -name '*.tgz' -print -quit)
+          bundle=$(realpath "$(find candidate/packed -maxdepth 1 -name '*.tgz' -print -quit)")
           dsh plugin --profile "${{ matrix.profile }}" add "$bundle"
           dsh plugin --profile "${{ matrix.profile }}" why dsh-plugin-diepi
           dsh --profile "${{ matrix.profile }}" --dump-config
