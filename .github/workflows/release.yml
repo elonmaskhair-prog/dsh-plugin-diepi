@@ -1,0 +1,372 @@
+name: release Python package
+
+on:
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: Successful main CI run ID containing release-candidate
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: diepi-mcp-pypi
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify selected CI artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Validate selected run and immutable artifact
+        id: source
+        env:
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -I - <<'PY'
+          import json
+          import os
+          import re
+          from urllib.request import Request, urlopen
+
+          def require(condition: bool, message: str) -> None:
+              if not condition:
+                  raise SystemExit(message)
+
+          run_id_text = os.environ["CI_RUN_ID"]
+          require(
+              re.fullmatch(r"[1-9][0-9]*", run_id_text) is not None,
+              "ci_run_id must be a positive decimal GitHub Actions run ID",
+          )
+          run_id = int(run_id_text)
+          expected_repository = "elonmaskhair-prog/dsh-plugin-diepi"
+
+          require(
+              os.environ["GITHUB_REPOSITORY"] == expected_repository,
+              "release workflow must run in the canonical repository",
+          )
+          require(
+              os.environ["GITHUB_REF"] == "refs/heads/main",
+              "release workflow must be dispatched from main",
+          )
+          current_sha = os.environ["GITHUB_SHA"]
+          require(
+              re.fullmatch(r"[0-9a-f]{40}", current_sha) is not None,
+              "GITHUB_SHA is not a full commit SHA",
+          )
+
+          api_url = os.environ["GITHUB_API_URL"].rstrip("/")
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {os.environ['RELEASE_GITHUB_TOKEN']}",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "dsh-plugin-diepi-release-verifier",
+          }
+
+          def get_json(path: str) -> dict:
+              request = Request(f"{api_url}{path}", headers=headers)
+              with urlopen(request, timeout=30) as response:
+                  require(
+                      response.status == 200,
+                      f"GitHub API returned {response.status}",
+                  )
+                  return json.load(response)
+
+          run = get_json(
+              f"/repos/{expected_repository}/actions/runs/{run_id}"
+          )
+          repository = run.get("repository") or {}
+          head_repository = run.get("head_repository") or {}
+          workflow_path = str(run.get("path") or "").split("@", 1)[0]
+          head_sha = str(run.get("head_sha") or "")
+
+          require(run.get("id") == run_id, "workflow run ID mismatch")
+          require(run.get("name") == "CI", "selected run is not CI")
+          require(
+              workflow_path == ".github/workflows/ci.yml",
+              "selected run did not execute .github/workflows/ci.yml",
+          )
+          require(
+              repository.get("full_name") == expected_repository,
+              "selected run belongs to another repository",
+          )
+          require(
+              head_repository.get("full_name") == expected_repository,
+              "selected run has a foreign head repository",
+          )
+          require(run.get("event") == "push", "selected run is not a push run")
+          require(
+              run.get("head_branch") == "main",
+              "selected run is not from main",
+          )
+          require(run.get("status") == "completed", "selected run is incomplete")
+          require(
+              run.get("conclusion") == "success",
+              "selected run did not succeed",
+          )
+          require(
+              re.fullmatch(r"[0-9a-f]{40}", head_sha) is not None,
+              "selected run has an invalid head_sha",
+          )
+          require(
+              head_sha == current_sha,
+              "selected CI head_sha is not this main release commit",
+          )
+          require(
+              (run.get("head_commit") or {}).get("id") == head_sha,
+              "selected run head_commit does not match head_sha",
+          )
+
+          document = get_json(
+              f"/repos/{expected_repository}/actions/runs/{run_id}/artifacts"
+              "?name=release-candidate&per_page=100"
+          )
+          artifacts = [
+              item
+              for item in document.get("artifacts", [])
+              if item.get("name") == "release-candidate"
+          ]
+          require(
+              document.get("total_count") == 1 and len(artifacts) == 1,
+              "run must contain exactly one release-candidate artifact",
+          )
+
+          artifact = artifacts[0]
+          artifact_run = artifact.get("workflow_run") or {}
+          digest = str(artifact.get("digest") or "")
+
+          require(artifact.get("expired") is False, "artifact has expired")
+          require(
+              isinstance(artifact.get("size_in_bytes"), int)
+              and artifact["size_in_bytes"] > 0,
+              "artifact is empty",
+          )
+          require(
+              re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is not None,
+              "artifact has no valid GitHub SHA-256 digest",
+          )
+          require(
+              artifact_run.get("id") == run_id,
+              "artifact belongs to another run",
+          )
+          require(
+              artifact_run.get("head_branch") == "main",
+              "artifact is not bound to main",
+          )
+          require(
+              artifact_run.get("head_sha") == head_sha,
+              "artifact head_sha mismatch",
+          )
+          require(
+              artifact_run.get("repository_id") == repository.get("id"),
+              "artifact repository ID mismatch",
+          )
+          require(
+              artifact_run.get("head_repository_id")
+              == head_repository.get("id"),
+              "artifact head repository ID mismatch",
+          )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"artifact_id={artifact['id']}\n")
+
+          print(
+              f"selected run {run_id} at {head_sha}; "
+              f"artifact {artifact['id']} digest {digest}"
+          )
+          PY
+
+      - name: Check out the exact tested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download the exact immutable release candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.source.outputs.artifact_id }}
+          github-token: ${{ github.token }}
+          repository: elonmaskhair-prog/dsh-plugin-diepi
+          run-id: ${{ inputs.ci_run_id }}
+          path: candidate
+          digest-mismatch: error
+
+      - name: Verify candidate SHA-256 manifest and payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -I .github/scripts/verify_sha256s.py \
+            candidate/SHA256SUMS candidate
+
+          mapfile -d '' bundles < <(
+            find candidate/packed -maxdepth 1 -type f -name '*.tgz' -print0
+          )
+          test "${#bundles[@]}" -eq 1
+
+          python -I .github/scripts/check_artifacts.py \
+            candidate/dist "${bundles[0]}"
+
+      - name: Stage bit-identical Python files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -I - <<'PY'
+          from pathlib import Path, PurePosixPath
+          import re
+          import shutil
+
+          root = Path("candidate").resolve(strict=True)
+          entries = list(root.rglob("*"))
+          if any(path.is_symlink() for path in entries):
+              raise SystemExit("release-candidate contains a symlink")
+
+          directories = {
+              path.relative_to(root).as_posix()
+              for path in entries
+              if path.is_dir()
+          }
+          if directories != {"dist", "packed"}:
+              raise SystemExit(
+                  f"unexpected candidate directories: {sorted(directories)}"
+              )
+
+          wheels = sorted((root / "dist").glob("*.whl"))
+          sdists = sorted((root / "dist").glob("*.tar.gz"))
+          bundles = sorted((root / "packed").glob("*.tgz"))
+          if (len(wheels), len(sdists), len(bundles)) != (1, 1, 1):
+              raise SystemExit(
+                  "expected one wheel, one sdist, and one npm tgz"
+              )
+
+          selected = [wheels[0], sdists[0]]
+          payload = selected + bundles
+          expected_files = {
+              "SHA256SUMS",
+              *(path.relative_to(root).as_posix() for path in payload),
+          }
+          actual_files = {
+              path.relative_to(root).as_posix()
+              for path in entries
+              if path.is_file()
+          }
+          if actual_files != expected_files:
+              raise SystemExit(
+                  "unexpected candidate files: "
+                  f"{sorted(actual_files ^ expected_files)}"
+              )
+
+          pattern = re.compile(r"^([0-9a-f]{64}) [ *](.+)$")
+          digests: dict[str, str] = {}
+          for line in (root / "SHA256SUMS").read_text(
+              encoding="utf-8"
+          ).splitlines():
+              match = pattern.fullmatch(line)
+              if match is None:
+                  raise SystemExit("invalid SHA256SUMS line")
+              digest, raw_name = match.groups()
+              relative = PurePosixPath(raw_name)
+              name = relative.as_posix()
+              if relative.is_absolute() or ".." in relative.parts:
+                  raise SystemExit("unsafe SHA256SUMS path")
+              if name in digests:
+                  raise SystemExit("duplicate SHA256SUMS path")
+              digests[name] = digest
+
+          payload_names = {
+              path.relative_to(root).as_posix() for path in payload
+          }
+          if set(digests) != payload_names:
+              raise SystemExit("SHA256SUMS does not describe the exact payload")
+
+          output = Path("verified-python")
+          (output / "dist").mkdir(parents=True)
+          manifest_lines: list[str] = []
+
+          for source in selected:
+              relative = source.relative_to(root).as_posix()
+              destination = output / "dist" / source.name
+              shutil.copyfile(source, destination)
+              manifest_lines.append(
+                  f"{digests[relative]}  dist/{source.name}\n"
+              )
+
+          (output / "SHA256SUMS").write_text(
+              "".join(manifest_lines),
+              encoding="utf-8",
+              newline="\n",
+          )
+          PY
+
+      - name: Upload verified Python distributions without rebuilding
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verified-python-distributions
+          path: verified-python/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: publish exact files to PyPI
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/p/diepi-mcp
+    permissions:
+      actions: read
+      id-token: write
+    steps:
+      - name: Download the verified Python distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: verified-python-distributions
+          path: verified-python
+          digest-mismatch: error
+
+      - name: Reverify and isolate uploadable files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(find verified-python -type l -print -quit)"
+
+          mapfile -d '' directories < <(
+            find verified-python -mindepth 1 -type d -print0
+          )
+          mapfile -d '' files < <(
+            find verified-python -type f -print0
+          )
+          mapfile -d '' wheels < <(
+            find verified-python/dist -maxdepth 1 \
+              -type f -name '*.whl' -print0
+          )
+          mapfile -d '' sdists < <(
+            find verified-python/dist -maxdepth 1 \
+              -type f -name '*.tar.gz' -print0
+          )
+
+          test "${#directories[@]}" -eq 1
+          test "${directories[0]}" = "verified-python/dist"
+          test "${#files[@]}" -eq 3
+          test "${#wheels[@]}" -eq 1
+          test "${#sdists[@]}" -eq 1
+          test -f verified-python/SHA256SUMS
+
+          (cd verified-python && sha256sum --check SHA256SUMS)
+
+          mkdir publish-dist
+          cp -- "${wheels[0]}" "${sdists[0]}" publish-dist/
+
+      - name: Publish with PyPI Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: publish-dist/
