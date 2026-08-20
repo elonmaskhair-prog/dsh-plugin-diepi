@@ -102,8 +102,20 @@ quality. Source tests cover the adapter state-machine cases; any release claim
 about those end-to-end DSH behaviors needs a separately recorded manual gate.
 
 Build once, test those exact files, record SHA-256 digests, and publish the same
-files with manual approval. This repository's CI intentionally contains no
-publish job.
+files with manual approval. The regular CI workflow cannot publish. The manual
+Python release workflow accepts only a successful `main` CI run whose full
+commit SHA matches the dispatch commit, revalidates the immutable candidate and
+its internal SHA-256 manifest, and gives OIDC permission only to the
+environment-gated PyPI job. It does not rebuild artifacts or publish npm.
+
+Before dispatch, a repository administrator must pre-create the `pypi`
+environment with a required reviewer and a custom deployment-branch policy
+limited to `main`, then configure a PyPI Pending Trusted Publisher for project
+`diepi-mcp`, owner `elonmaskhair-prog`, repository `dsh-plugin-diepi`, workflow
+`release.yml`, and environment `pypi`. Do not rely on a workflow run to
+auto-create an unprotected environment. A single-maintainer repository must
+allow that reviewer to approve their own deployment; enable prevent-self-review
+only after another trusted reviewer is available.
 
 ## Scope reminders
 
