@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "diepi-mcp"
+version = "0.1.0a1"
+description = "Constrained MCP adapter for auditable diePi research backtests"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+authors = [{name = "diePi contributors"}]
+keywords = ["backtesting", "mcp", "deepseek-harness", "quantitative-finance"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Financial and Insurance Industry",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = [
+  "diepi==0.1.1",
+  "mcp==1.29.0",
+  "pydantic>=2.12,<3",
+  "pydantic-settings>=2.12,<2.15",
+]
+
+[project.urls]
+Homepage = "https://github.com/elonmaskhair-prog/dsh-plugin-diepi"
+Repository = "https://github.com/elonmaskhair-prog/dsh-plugin-diepi"
+Documentation = "https://github.com/elonmaskhair-prog/dsh-plugin-diepi#readme"
+Issues = "https://github.com/elonmaskhair-prog/dsh-plugin-diepi/issues"
+Changelog = "https://github.com/elonmaskhair-prog/dsh-plugin-diepi/blob/main/CHANGELOG.md"
+Security = "https://github.com/elonmaskhair-prog/dsh-plugin-diepi/security/policy"
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2,<2",
+  "pytest>=8,<10",
+  "ruff>=0.12,<1",
+  "twine>=6,<7",
+]
+
+[project.scripts]
+diepi-mcp = "diepi_mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+  "integration: runs an isolated diePi subprocess against configured market-data fixtures",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]

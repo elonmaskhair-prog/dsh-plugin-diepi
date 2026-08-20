@@ -1,0 +1,292 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python ${{ matrix.python }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install exact development contract
+        run: python -m pip install ".[dev]"
+      - name: Static checks
+        run: python -m ruff check src tests .github/scripts
+      - name: Unit and MCP stdio tests
+        run: python -m pytest -m "not integration"
+
+  candidate:
+    name: Build and inspect candidate artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.20"
+      - name: Install build tooling
+        run: python -m pip install "build>=1.2,<2" "twine>=6,<7"
+      - name: Build Python distributions once
+        run: python -m build --outdir dist
+      - name: Check Python metadata
+        run: python -m twine check dist/*
+      - name: Check fail-closed bundle configuration
+        run: node .github/scripts/check_bundle.mjs
+      - name: Pack npm bundle once
+        run: |
+          mkdir packed
+          cd dsh
+          npm pack --pack-destination ../packed
+      - name: Inspect exact payloads
+        run: python .github/scripts/check_artifacts.py dist "$(find packed -maxdepth 1 -name '*.tgz' -print -quit)"
+      - name: Record SHA-256
+        run: sha256sum dist/* packed/* > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-candidate
+          path: |
+            dist/*
+            packed/*
+            SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+  candidate-sdist:
+    name: Clean sdist install and synthetic smoke
+    needs: candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-candidate
+          path: candidate
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Verify downloaded candidate digests
+        run: python -I .github/scripts/verify_sha256s.py candidate/SHA256SUMS candidate
+      - name: Install only the sdist in a clean environment and run synthetic smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/sdist-venv"
+          candidate_python="$RUNNER_TEMP/sdist-venv/bin/python"
+          candidate_mcp="$RUNNER_TEMP/sdist-venv/bin/diepi-mcp"
+          "$candidate_python" -m pip install "$(find candidate/dist -maxdepth 1 -name '*.tar.gz' -print -quit)"
+          "$candidate_python" -m pip check
+          "$candidate_mcp" init-config --target "$RUNNER_TEMP/sdist-adapter-home"
+          export DIEPI_MCP_COMMAND="$candidate_mcp"
+          export DIEPI_MCP_CONFIG="$RUNNER_TEMP/sdist-adapter-home/diepi-mcp.json"
+          "$candidate_mcp" --check-config
+          "$candidate_python" -I .github/scripts/smoke_candidate.py
+
+  packed-dsh:
+    name: ${{ matrix.name }}
+    needs: [python, candidate, candidate-sdist]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: rc.7 / Windows / Node 22 / web
+            os: windows-latest
+            node: "22.20"
+            dsh: "0.1.0-rc.7"
+            profile: web
+          - name: rc.7 / Ubuntu / Node 24 / headless
+            os: ubuntu-latest
+            node: "24"
+            dsh: "0.1.0-rc.7"
+            profile: headless
+          - name: rc.8 / Windows / Node 22 / web canary
+            os: windows-latest
+            node: "22.20"
+            dsh: "0.1.0-rc.8"
+            profile: web
+          - name: rc.8 / Ubuntu / Node 24 / headless canary
+            os: ubuntu-latest
+            node: "24"
+            dsh: "0.1.0-rc.8"
+            profile: headless
+    env:
+      DSH_HOME: ${{ runner.temp }}/dsh-home-${{ matrix.dsh }}-${{ matrix.profile }}
+      DSH_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-candidate
+          path: candidate
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 11.7.0
+
+      - name: Verify downloaded candidate digests
+        run: python -I .github/scripts/verify_sha256s.py candidate/SHA256SUMS candidate
+
+      - name: Install wheel and initialize host-owned synthetic home (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $wheel = (Get-ChildItem candidate\dist\*.whl | Select-Object -First 1).FullName
+          python -m pip install $wheel
+          python -m pip check
+          $adapterHome = Join-Path $env:RUNNER_TEMP "adapter-home"
+          diepi-mcp init-config --target $adapterHome
+          $config = Join-Path $adapterHome "diepi-mcp.json"
+          $mcp = (Get-Command diepi-mcp).Source
+          "DIEPI_MCP_COMMAND=$mcp" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "DIEPI_MCP_CONFIG=$config" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Install wheel and initialize host-owned synthetic home (Ubuntu)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install "$(find candidate/dist -maxdepth 1 -name '*.whl' -print -quit)"
+          python -m pip check
+          diepi-mcp init-config --target "$RUNNER_TEMP/adapter-home"
+          echo "DIEPI_MCP_COMMAND=$(command -v diepi-mcp)" >> "$GITHUB_ENV"
+          echo "DIEPI_MCP_CONFIG=$RUNNER_TEMP/adapter-home/diepi-mcp.json" >> "$GITHUB_ENV"
+
+      - name: Check installed wheel config and direct MCP surface
+        run: |
+          diepi-mcp --check-config
+          python -I .github/scripts/smoke_mcp_candidate.py
+
+      - name: Run deterministic candidate backtest
+        run: python -I .github/scripts/smoke_candidate.py
+
+      - name: Install exact DSH prerelease (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $runtime = Join-Path $env:RUNNER_TEMP "dsh-runtime"
+          New-Item -ItemType Directory -Path $runtime | Out-Null
+          Push-Location $runtime
+          try {
+            npm init --yes | Out-Null
+            pnpm add --ignore-scripts "@deepseek-ai/dsh@${{ matrix.dsh }}"
+          } finally {
+            Pop-Location
+          }
+          $bin = Join-Path $runtime "node_modules\.bin"
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          & (Join-Path $bin "dsh.cmd") --version
+
+      - name: Install exact DSH prerelease (Ubuntu)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$RUNNER_TEMP/dsh-runtime"
+          mkdir "$runtime"
+          cd "$runtime"
+          npm init --yes >/dev/null
+          pnpm add --ignore-scripts "@deepseek-ai/dsh@${{ matrix.dsh }}"
+          echo "$runtime/node_modules/.bin" >> "$GITHUB_PATH"
+          "$runtime/node_modules/.bin/dsh" --version
+
+      - name: Install packed bundle and compose profile (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bundle = (Get-ChildItem candidate\packed\*.tgz | Select-Object -First 1).FullName
+          dsh plugin --profile "${{ matrix.profile }}" add $bundle
+          dsh plugin --profile "${{ matrix.profile }}" why dsh-plugin-diepi
+          dsh --profile "${{ matrix.profile }}" --dump-config
+
+      - name: Install packed bundle and compose profile (Ubuntu)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle=$(find candidate/packed -maxdepth 1 -name '*.tgz' -print -quit)
+          dsh plugin --profile "${{ matrix.profile }}" add "$bundle"
+          dsh plugin --profile "${{ matrix.profile }}" why dsh-plugin-diepi
+          dsh --profile "${{ matrix.profile }}" --dump-config
+
+      - name: Boot packed bundle and probe DSH tools without a model key (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $probeDirectory = Join-Path $env:RUNNER_TEMP "diepi-dsh-probe"
+          $probePatch = Join-Path $probeDirectory "probe.yml"
+          node .github/scripts/write_dsh_probe_overlay.mjs "${{ matrix.profile }}" $probePatch .github/scripts/dsh_runtime_probe.mjs
+          if ("${{ matrix.profile }}" -eq "web") {
+            if ("${{ matrix.dsh }}" -eq "0.1.0-rc.8") {
+              $output = @(& dsh --profile web --patch $probePatch --port 0 --no-open 2>&1)
+            } else {
+              # rc.7 does not open a browser and does not yet recognize --no-open.
+              $output = @(& dsh --profile web --patch $probePatch --port 0 2>&1)
+            }
+          } else {
+            $output = @(& dsh --profile headless --patch $probePatch "diePi CI probe only" 2>&1)
+          }
+          $exitCode = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host $_ }
+          if ($exitCode -ne 0) {
+            throw "DSH runtime probe exited with code $exitCode"
+          }
+          if (-not ($output | Where-Object { "$_" -eq "DIEPI_DSH_RUNTIME_PROBE_PASS" })) {
+            throw "DSH runtime probe PASS sentinel was not observed"
+          }
+
+      - name: Boot packed bundle and probe DSH tools without a model key (Ubuntu)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe_directory="$RUNNER_TEMP/diepi-dsh-probe"
+          probe_patch="$probe_directory/probe.yml"
+          probe_log="$probe_directory/probe.log"
+          node .github/scripts/write_dsh_probe_overlay.mjs "${{ matrix.profile }}" "$probe_patch" .github/scripts/dsh_runtime_probe.mjs
+          if [[ "${{ matrix.profile }}" == "web" ]]; then
+            if [[ "${{ matrix.dsh }}" == "0.1.0-rc.8" ]]; then
+              dsh --profile web --patch "$probe_patch" --port 0 --no-open 2>&1 | tee "$probe_log"
+            else
+              # rc.7 does not open a browser and does not yet recognize --no-open.
+              dsh --profile web --patch "$probe_patch" --port 0 2>&1 | tee "$probe_log"
+            fi
+          else
+            dsh --profile headless --patch "$probe_patch" "diePi CI probe only" 2>&1 | tee "$probe_log"
+          fi
+          grep -Fx "DIEPI_DSH_RUNTIME_PROBE_PASS" "$probe_log"

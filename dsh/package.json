@@ -1,0 +1,49 @@
+{
+  "name": "dsh-plugin-diepi",
+  "version": "0.1.0-alpha.1",
+  "description": "Community DSH plugin for constrained, auditable diePi research backtests",
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "skills/**",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "keywords": [
+    "dsh-plugin",
+    "diepi",
+    "backtesting",
+    "mcp",
+    "quantitative-finance"
+  ],
+  "author": "diePi contributors",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/elonmaskhair-prog/dsh-plugin-diepi#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elonmaskhair-prog/dsh-plugin-diepi.git",
+    "directory": "dsh"
+  },
+  "bugs": {
+    "url": "https://github.com/elonmaskhair-prog/dsh-plugin-diepi/issues"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

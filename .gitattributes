@@ -1,0 +1,6 @@
+* text=auto eol=lf
+
+*.gz binary
+*.parquet binary
+*.tgz binary
+*.whl binary
