@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "state_root": "state",
+  "max_concurrent_jobs": 1,
+  "max_queued_jobs": 32,
+  "max_calendar_days": 10000,
+  "datasets": {
+    "synthetic-demo": {
+      "description": "Locally generated deterministic synthetic daily data; not market data",
+      "data_root": "synthetic-demo/market-data",
+      "results_root": "results",
+      "data_grade": "dual",
+      "default_price_mode": "dual"
+    }
+  }
+}

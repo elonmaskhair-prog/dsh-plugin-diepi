@@ -1,0 +1,33 @@
+name: Feature request
+description: Propose a bounded research, protocol, or developer-experience change.
+title: "[proposal] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: Describe the research or integration problem without prescribing an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Trust and quantitative boundary
+      description: Explain affected data, execution, permissions, and evidence assumptions.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed contract
+      description: Describe model-facing inputs/outputs and fail-closed behavior.
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This proposal does not silently add live trading, broker credentials, or arbitrary code execution.
+          required: true

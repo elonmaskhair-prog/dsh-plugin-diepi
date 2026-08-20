@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a reproducible adapter or DSH bundle defect using synthetic data.
+title: "[bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Security vulnerabilities must use the private process in SECURITY.md.
+        Never attach API keys, DSH sessions, job databases, or third-party market data.
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Include OS, Python, Node, pnpm, DSH, diepi-mcp, and diePi versions.
+      placeholder: Windows 11; Python 3.12; Node 22.20; pnpm 11.7; DSH rc.7; diepi-mcp 0.1.0a1; diePi 0.1.1
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Synthetic reproduction
+      description: Provide minimal steps using diepi demo or another generated-only fixture.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and bounded diagnostics
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, private paths/sessions, databases, and market data.
+          required: true
+        - label: This report does not request live trading or arbitrary Python execution.
+          required: true

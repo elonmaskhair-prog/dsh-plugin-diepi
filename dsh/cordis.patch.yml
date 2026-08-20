@@ -1,0 +1,28 @@
+- insert:
+    - id: diepi-bundle-config
+      name: dsh-plugin-diepi
+
+    - id: diepi-skill-provider
+      name: '@deepseek-ai/dsh-skill-filesystem'
+      inject: [diepiBundleConfig]
+      config:
+        providerName: diepi-bundle
+        includeDefaultRoots: false
+        bundledSkillDir: !!js ctx.diepiBundleConfig.skillDir
+        watch: false
+
+    - id: diepi-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      inject: [diepiBundleConfig]
+      config:
+        serverName: diepi
+        transport: stdio
+        command: !!js ctx.diepiBundleConfig.command
+        args: []
+        cwd: !!js ctx.diepiBundleConfig.cwd
+        env:
+          DIEPI_MCP_CONFIG: !!js ctx.diepiBundleConfig.config
+        # DSH rc.7/rc.8 expose one timeout for this MCP server. Keep enough
+        # headroom for synchronous admission before start_backtest returns.
+        toolCallTimeoutMs: !!js Math.max(300000, Math.min(2147483647, Math.trunc(Number(process.env.DIEPI_MCP_TOOL_CALL_TIMEOUT_MS ?? 600000)) || 600000))
+        failOnStartupError: true
