@@ -22,7 +22,7 @@ classifiers = [
 ]
 dependencies = [
   "diepi==0.1.1",
-  "mcp==1.29.0",
+  "mcp==2.1.1",
   "pydantic>=2.12,<3",
   "pydantic-settings>=2.12,<2.15",
 ]
